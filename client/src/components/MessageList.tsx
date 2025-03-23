@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAbly } from '../context/AblyContext';
 import { useAuth } from '../context/AuthContext';
 import { UserAvatar } from './UserAvatar';
@@ -20,6 +20,16 @@ export function MessageList() {
     const { user } = useAuth();
     const { chatChannel, ably } = useAbly();
     const [messages, setMessages] = useState<Message[]>([]);
+    const messagesEndRef = useRef<HTMLDivElement>(null);
+
+    // Auto-scroll to bottom when new messages arrive
+    const scrollToBottom = () => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    useEffect(() => {
+        scrollToBottom();
+    }, [messages]);
 
     // Subscribe to messages
     useEffect(() => {
@@ -91,12 +101,10 @@ export function MessageList() {
                                     : 'bg-gray-200 text-gray-800 rounded-tl-lg rounded-tr-lg rounded-br-lg'
                                     } px-4 py-2 break-words`}
                             >
-                                {/* Sender name (only for other users) */}
-                                {!isOwnMessage && (
-                                    <div className="text-xs font-semibold mb-1">
-                                        {message.sender.username}
-                                    </div>
-                                )}
+                                {/* Sender name in [username] format */}
+                                <div className={`text-xs font-semibold mb-1 ${isOwnMessage ? 'text-blue-100' : 'text-gray-600'}`}>
+                                    [{message.sender.username}]
+                                </div>
 
                                 {/* Message content */}
                                 <div>{message.content}</div>
@@ -110,6 +118,7 @@ export function MessageList() {
                     </div>
                 );
             })}
+            <div ref={messagesEndRef} />
         </div>
     );
 } 

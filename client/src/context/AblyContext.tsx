@@ -7,6 +7,8 @@ interface AblyContextType {
     chatChannel: Ably.RealtimeChannel | null;
     presenceChannel: Ably.RealtimeChannel | null;
     userPresence: Map<string, boolean>;
+    generalChatSpace: any | null; // Ably Space for General Chat
+    generalChatMembers: Array<{ id: string; connectionId: string; profileData: any; }>;
     sendMessage: (content: string, recipient?: { id: string, username: string }) => Promise<void>;
 }
 
@@ -18,6 +20,8 @@ export function AblyProvider({ children }: { children: ReactNode }) {
     const [chatChannel, setChatChannel] = useState<Ably.RealtimeChannel | null>(null);
     const [presenceChannel, setPresenceChannel] = useState<Ably.RealtimeChannel | null>(null);
     const [userPresence, setUserPresence] = useState<Map<string, boolean>>(new Map());
+    const [generalChatSpace, setGeneralChatSpace] = useState<any | null>(null);
+    const [generalChatMembers, setGeneralChatMembers] = useState<Array<{ id: string; connectionId: string; profileData: any; }>>([]);
 
     // Initialize Ably client when user is authenticated
     useEffect(() => {
@@ -28,6 +32,8 @@ export function AblyProvider({ children }: { children: ReactNode }) {
                 setAbly(null);
                 setChatChannel(null);
                 setPresenceChannel(null);
+                setGeneralChatSpace(null);
+                setGeneralChatMembers([]);
                 return;
             }
 
@@ -63,6 +69,48 @@ export function AblyProvider({ children }: { children: ReactNode }) {
 
                 // Enter the presence channel
                 await presence.presence.enter({ userId: user.id });
+
+                // Initialize the General Chat space using Ably Spaces
+                if (client.spaces) {
+                    const space = client.spaces.get('general-chat');
+
+                    // Set up member handlers for the space
+                    space.members.subscribe('enter', (memberInfo) => {
+                        console.log('Member entered:', memberInfo);
+                        setGeneralChatMembers(prev => [...prev, memberInfo]);
+                    });
+
+                    space.members.subscribe('leave', (memberInfo) => {
+                        console.log('Member left:', memberInfo);
+                        setGeneralChatMembers(prev =>
+                            prev.filter(member => member.connectionId !== memberInfo.connectionId)
+                        );
+                    });
+
+                    space.members.subscribe('update', (memberInfo) => {
+                        console.log('Member updated:', memberInfo);
+                        setGeneralChatMembers(prev =>
+                            prev.map(member =>
+                                member.connectionId === memberInfo.connectionId ? memberInfo : member
+                            )
+                        );
+                    });
+
+                    // Enter the space with user profile data
+                    await space.enter({
+                        username: user.user_metadata.username || 'Anonymous',
+                        id: user.id,
+                        isOnline: true
+                    });
+
+                    // Get existing members
+                    const members = await space.members.get();
+                    setGeneralChatMembers(members);
+
+                    setGeneralChatSpace(space);
+                } else {
+                    console.warn('Ably Spaces is not available in this SDK version');
+                }
             } catch (error) {
                 console.error('Error initializing Ably:', error);
             }
@@ -73,6 +121,9 @@ export function AblyProvider({ children }: { children: ReactNode }) {
         // Cleanup
         return () => {
             if (client) {
+                if (generalChatSpace) {
+                    generalChatSpace.leave().catch(console.error);
+                }
                 client.close();
             }
         };
@@ -104,6 +155,8 @@ export function AblyProvider({ children }: { children: ReactNode }) {
         chatChannel,
         presenceChannel,
         userPresence,
+        generalChatSpace,
+        generalChatMembers,
         sendMessage
     };
 

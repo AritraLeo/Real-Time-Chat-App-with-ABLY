@@ -31,10 +31,10 @@ export function UserList({ onUserSelect, selectedUserId }: UserListProps) {
             if (!currentUser) return;
 
             try {
+                // Get all users including current user (for the forum view)
                 const { data, error } = await supabase
                     .from('users')
-                    .select('id, username, isOnline, lastSeen')
-                    .neq('id', currentUser.id); // Exclude current user
+                    .select('id, username, isOnline, lastSeen');
 
                 if (error) {
                     console.error('Error fetching users:', error);
@@ -65,6 +65,10 @@ export function UserList({ onUserSelect, selectedUserId }: UserListProps) {
                                 user.id === updatedUser.id ? updatedUser : user
                             )
                         );
+                    } else if (payload.eventType === 'INSERT') {
+                        // Add new user to the list
+                        const newUser = payload.new as User;
+                        setUsers(prevUsers => [...prevUsers, newUser]);
                     }
                 }
             )
@@ -77,7 +81,11 @@ export function UserList({ onUserSelect, selectedUserId }: UserListProps) {
 
     // Sort users by online status
     const sortedUsers = [...users].sort((a, b) => {
-        // Online users first
+        // Current user first if they're in the list
+        if (a.id === currentUser?.id) return -1;
+        if (b.id === currentUser?.id) return 1;
+
+        // Then online users
         if (a.isOnline && !b.isOnline) return -1;
         if (!a.isOnline && b.isOnline) return 1;
 
@@ -103,31 +111,36 @@ export function UserList({ onUserSelect, selectedUserId }: UserListProps) {
 
     return (
         <div className="overflow-y-auto p-2">
-            <h2 className="font-semibold text-gray-700 mb-2 px-2">Users</h2>
             <ul className="space-y-1">
-                {sortedUsers.map(user => (
-                    <li
-                        key={user.id}
-                        className={`p-2 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors ${selectedUserId === user.id ? 'bg-blue-50 hover:bg-blue-100' : ''
-                            }`}
-                        onClick={() => onUserSelect(user)}
-                    >
-                        <div className="flex items-center gap-3">
-                            <UserAvatar userId={user.id} username={user.username} size="sm" />
-                            <div>
-                                <div className="font-medium">{user.username}</div>
-                                <div className="text-xs text-gray-500">
-                                    {user.isOnline
-                                        ? 'Online now'
-                                        : user.lastSeen
-                                            ? `Last seen ${new Date(user.lastSeen).toLocaleString()}`
-                                            : 'Offline'
-                                    }
+                {sortedUsers.map(user => {
+                    const isCurrentUser = user.id === currentUser?.id;
+                    return (
+                        <li
+                            key={user.id}
+                            className={`p-2 rounded-lg cursor-pointer hover:bg-gray-100 transition-colors ${selectedUserId === user.id ? 'bg-blue-50 hover:bg-blue-100' : ''
+                                } ${isCurrentUser ? 'bg-gray-50' : ''}`}
+                            onClick={() => !isCurrentUser && onUserSelect(user)}
+                        >
+                            <div className="flex items-center gap-3">
+                                <UserAvatar userId={user.id} username={user.username} size="sm" />
+                                <div>
+                                    <div className="font-medium">
+                                        {user.username}
+                                        {isCurrentUser && <span className="text-xs ml-2 text-gray-500">(You)</span>}
+                                    </div>
+                                    <div className="text-xs text-gray-500">
+                                        {user.isOnline
+                                            ? 'Online now'
+                                            : user.lastSeen
+                                                ? `Last seen ${new Date(user.lastSeen).toLocaleString()}`
+                                                : 'Offline'
+                                        }
+                                    </div>
                                 </div>
                             </div>
-                        </div>
-                    </li>
-                ))}
+                        </li>
+                    );
+                })}
             </ul>
         </div>
     );
