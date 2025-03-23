@@ -12,6 +12,70 @@ interface User {
     lastSeen?: string;
 }
 
+// Define fallback styles to ensure layout works
+const styles = {
+    container: {
+        display: 'flex',
+        height: '100vh',
+        backgroundColor: '#FFFFFF'
+    },
+    sidebarVisible: {
+        display: 'block',
+        width: '30%',
+        borderRight: '1px solid #E5E7EB'
+    },
+    sidebarHidden: {
+        display: 'none'
+    },
+    sidebarMd: {
+        width: '20rem'
+    },
+    sidebarLg: {
+        width: '24rem'
+    },
+    headerContainer: {
+        padding: '1rem',
+        borderBottom: '1px solid #E5E7EB',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between'
+    },
+    userInfoContainer: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.75rem'
+    },
+    username: {
+        fontWeight: '600'
+    },
+    onlineStatus: {
+        fontSize: '0.75rem',
+        color: '#10B981'
+    },
+    offlineStatus: {
+        fontSize: '0.75rem',
+        color: '#6B7280'
+    },
+    signOutButton: {
+        color: '#6B7280',
+        cursor: 'pointer'
+    },
+    toggleButton: {
+        display: 'block',
+        color: '#6B7280',
+        cursor: 'pointer'
+    },
+    hiddenMd: {
+        display: 'none'
+    },
+    chatContainer: {
+        display: 'flex',
+        flexDirection: 'column' as const,
+        flex: '1',
+        height: '100%'
+    }
+};
+
 export function Chat() {
     const { user, signOut } = useAuth();
     const [selectedUser, setSelectedUser] = useState<User | null>(null);
@@ -33,33 +97,42 @@ export function Chat() {
         return null;
     }
 
+    // Apply the inline styles based on state
+    const sidebarStyle = {
+        ...showUserList ? styles.sidebarVisible : styles.sidebarHidden,
+        '@media (min-width: 768px)': styles.sidebarMd,
+        '@media (min-width: 1024px)': styles.sidebarLg
+    };
+
     return (
-        <div className="flex h-screen bg-white">
+        <div style={styles.container} className="flex h-screen bg-white">
             {/* User list (sidebar) */}
             <div
+                style={sidebarStyle}
                 className={`
           ${showUserList ? 'block' : 'hidden'} 
           md:block w-full md:w-80 lg:w-96 border-r border-gray-200
         `}
             >
                 {/* Current user info */}
-                <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                <div style={styles.headerContainer} className="p-4 border-b border-gray-200 flex items-center justify-between">
+                    <div style={styles.userInfoContainer} className="flex items-center gap-3">
                         <UserAvatar
                             userId={user.id}
                             username={user.user_metadata.username || 'Anonymous'}
                         />
                         <div>
-                            <div className="font-semibold">
+                            <div style={styles.username} className="font-semibold">
                                 {user.user_metadata.username || 'Anonymous'}
                             </div>
-                            <div className="text-xs text-green-500">Online</div>
+                            <div style={styles.onlineStatus} className="text-xs text-green-500">Online</div>
                         </div>
                     </div>
 
                     {/* Sign out button */}
                     <button
                         onClick={signOut}
+                        style={styles.signOutButton}
                         className="text-gray-500 hover:text-gray-700"
                     >
                         Sign Out
@@ -74,12 +147,13 @@ export function Chat() {
             </div>
 
             {/* Chat area */}
-            <div className="flex-1 flex flex-col h-full">
+            <div style={styles.chatContainer} className="flex-1 flex flex-col h-full">
                 {/* Chat header */}
-                <div className="p-4 border-b border-gray-200 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
+                <div style={styles.headerContainer} className="p-4 border-b border-gray-200 flex items-center justify-between">
+                    <div style={styles.userInfoContainer} className="flex items-center gap-3">
                         {/* Toggle user list on mobile */}
                         <button
+                            style={styles.toggleButton}
                             className="md:hidden text-gray-500"
                             onClick={toggleUserList}
                         >
@@ -93,18 +167,18 @@ export function Chat() {
                                     username={selectedUser.username}
                                 />
                                 <div>
-                                    <div className="font-semibold">{selectedUser.username}</div>
+                                    <div style={styles.username} className="font-semibold">{selectedUser.username}</div>
                                     <div className="text-xs">
                                         {selectedUser.isOnline ? (
-                                            <span className="text-green-500">Online</span>
+                                            <span style={styles.onlineStatus} className="text-green-500">Online</span>
                                         ) : (
-                                            <span className="text-gray-500">Offline</span>
+                                            <span style={styles.offlineStatus} className="text-gray-500">Offline</span>
                                         )}
                                     </div>
                                 </div>
                             </>
                         ) : (
-                            <div className="font-semibold">Group Chat</div>
+                            <div style={styles.username} className="font-semibold">Group Chat</div>
                         )}
                     </div>
                 </div>
