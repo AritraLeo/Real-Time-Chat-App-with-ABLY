@@ -71,26 +71,60 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const signUp = async (email: string, password: string, username: string) => {
-        const { error } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-                data: { username }
-            }
-        });
-
-        if (!error) {
-            // Create user profile in 'users' table
-            await supabase.from('users').insert({
-                id: (await supabase.auth.getUser()).data.user?.id,
+        try {
+            const { data, error } = await supabase.auth.signUp({
                 email,
-                username,
-                isOnline: true,
-                created_at: new Date().toISOString()
+                password,
+                options: {
+                    data: { username }
+                }
             });
-        }
 
-        return { error };
+            if (error) {
+                console.error('Error during sign up:', error);
+                return { error };
+            }
+
+            // Get the user ID from the response
+            const userId = data.user?.id;
+
+            if (!userId) {
+                console.error('No user ID returned after signup');
+                return { error: { message: 'Failed to create user account' } };
+            }
+
+            console.log('Registering user profile with ID:', userId);
+
+            // Create user profile using the server API instead of direct Supabase access
+            try {
+                const response = await fetch(`${import.meta.env.VITE_API_URL}/api/users/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        userId,
+                        email,
+                        username
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    console.error('Error from server during user registration:', errorData);
+                    return { error: errorData };
+                }
+
+                console.log('User profile created successfully');
+                return { error: null };
+            } catch (error) {
+                console.error('Exception during server API call:', error);
+                return { error };
+            }
+        } catch (err) {
+            console.error('Exception during sign up:', err);
+            return { error: err };
+        }
     };
 
     const signOut = async () => {
@@ -107,8 +141,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             await supabase
                 .from('users')
                 .update({
-                    isOnline,
-                    lastSeen: isOnline ? null : new Date().toISOString()
+                    isonline: isOnline,  // Changed from isOnline to isonline
+                    lastseen: isOnline ? null : new Date().toISOString()  // Changed from lastSeen to lastseen
                 })
                 .eq('id', user.id);
 

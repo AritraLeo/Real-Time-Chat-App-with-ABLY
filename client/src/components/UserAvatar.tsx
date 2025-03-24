@@ -1,14 +1,14 @@
 import { useAbly } from '../context/AblyContext';
 
 interface UserAvatarProps {
-    userId: string;
+    userId?: string;
     username: string;
     size?: 'sm' | 'md' | 'lg';
 }
 
 export function UserAvatar({ userId, username, size = 'md' }: UserAvatarProps) {
     const { userPresence } = useAbly();
-    const isOnline = userPresence.get(userId) || false;
+    const isOnline = userId ? (userPresence.get(userId) || false) : true; // Current user is always online
 
     // Size classes
     const sizeClasses = {

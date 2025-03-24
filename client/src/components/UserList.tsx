@@ -1,18 +1,15 @@
 import { useState, useEffect } from 'react';
-import { createClient } from '@supabase/supabase-js';
 import { UserAvatar } from './UserAvatar';
 import { useAuth } from '../context/AuthContext';
-
-// Initialize Supabase client
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
-const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-const supabase = createClient(supabaseUrl, supabaseKey);
+import { useAbly } from '../context/AblyContext';
 
 interface User {
     id: string;
     username: string;
-    isOnline: boolean;
+    isOnline?: boolean;
+    isonline?: boolean;
     lastSeen?: string;
+    lastseen?: string;
 }
 
 interface UserListProps {
@@ -22,62 +19,44 @@ interface UserListProps {
 
 export function UserList({ onUserSelect, selectedUserId }: UserListProps) {
     const { user: currentUser } = useAuth();
+    const { userPresence, users: ablyUsers } = useAbly();
     const [users, setUsers] = useState<User[]>([]);
     const [loading, setLoading] = useState(true);
 
-    // Fetch all users
+    // Merge users from Ably with local state and normalize field names
     useEffect(() => {
-        const fetchUsers = async () => {
-            if (!currentUser) return;
+        console.log('UserList - ablyUsers received:', ablyUsers);
+        console.log('UserList - currentUser:', currentUser);
 
-            try {
-                // Get all users including current user (for the forum view)
-                const { data, error } = await supabase
-                    .from('users')
-                    .select('id, username, isOnline, lastSeen');
+        if (ablyUsers.length > 0) {
+            console.log('Received users from AblyContext:', ablyUsers);
 
-                if (error) {
-                    console.error('Error fetching users:', error);
-                    return;
-                }
+            // Normalize field names (handle both camelCase and lowercase)
+            const normalizedUsers = ablyUsers.map(user => ({
+                ...user,
+                // Make sure we have isOnline property regardless of the source format
+                isOnline: user.isOnline !== undefined ? user.isOnline : user.isonline,
+                lastSeen: user.lastSeen || user.lastseen
+            }));
 
-                setUsers(data || []);
-            } catch (error) {
-                console.error('Error fetching users:', error);
-            } finally {
-                setLoading(false);
-            }
-        };
+            setUsers(normalizedUsers);
+            setLoading(false);
+        } else {
+            console.log('No users received from AblyContext yet');
+        }
+    }, [ablyUsers]);
 
-        fetchUsers();
-
-        // Subscribe to user changes
-        const channel = supabase
-            .channel('users_channel')
-            .on('postgres_changes',
-                { event: '*', schema: 'public', table: 'users' },
-                (payload) => {
-                    // Update users list when a user is updated
-                    if (payload.eventType === 'UPDATE') {
-                        const updatedUser = payload.new as User;
-                        setUsers(prevUsers =>
-                            prevUsers.map(user =>
-                                user.id === updatedUser.id ? updatedUser : user
-                            )
-                        );
-                    } else if (payload.eventType === 'INSERT') {
-                        // Add new user to the list
-                        const newUser = payload.new as User;
-                        setUsers(prevUsers => [...prevUsers, newUser]);
-                    }
-                }
-            )
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
-    }, [currentUser]);
+    // Update online status from Ably presence
+    useEffect(() => {
+        if (userPresence.size > 0 && users.length > 0) {
+            setUsers(prevUsers =>
+                prevUsers.map(user => {
+                    const isOnline = userPresence.get(user.id) || false;
+                    return { ...user, isOnline };
+                })
+            );
+        }
+    }, [userPresence, users.length]);
 
     // Sort users by online status
     const sortedUsers = [...users].sort((a, b) => {

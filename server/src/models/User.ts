@@ -16,8 +16,19 @@ export class User {
     private presenceChannel: Ably.RealtimeChannel;
 
     constructor(supabaseUrl: string, supabaseKey: string, ablyClient: Ably.Realtime) {
-        // Initialize Supabase client
-        this.supabase = createClient(supabaseUrl, supabaseKey);
+        // Initialize Supabase client with service role key for admin operations
+        // This bypasses RLS policies for server-side operations
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
+        if (!serviceRoleKey) {
+            console.warn('SUPABASE_SERVICE_ROLE_KEY not set - using anon key instead');
+        }
+
+        this.supabase = createClient(
+            supabaseUrl,
+            serviceRoleKey || supabaseKey // Use service role key if available, otherwise fall back to anon key
+        );
+
         this.ably = ablyClient;
         this.presenceChannel = this.ably.channels.get('presence');
     }
@@ -47,8 +58,8 @@ export class User {
         const { error } = await this.supabase
             .from('users')
             .update({
-                isOnline,
-                lastSeen: isOnline ? null : new Date()
+                isonline: isOnline,
+                lastseen: isOnline ? null : new Date()
             })
             .eq('id', userId);
 
@@ -75,7 +86,7 @@ export class User {
                 await this.presenceChannel.presence.enter({
                     userId: user.id,
                     username: user.username,
-                    isOnline: true
+                    isonline: true
                 });
             } else {
                 // Leave presence set
@@ -107,5 +118,40 @@ export class User {
             const userData = member.data as { userId: string };
             callback(userData.userId, false);
         });
+    }
+
+    /**
+     * Create a new user in the database
+     */
+    async createUser(userId: string, email: string, username: string): Promise<UserData | null> {
+        try {
+            console.log(`Creating user profile for ID: ${userId}, username: ${username}`);
+
+            // Use service role key for admin operations to bypass RLS
+            const { data, error } = await this.supabase
+                .from('users')
+                .insert({
+                    id: userId,
+                    email,
+                    username,
+                    isonline: true,
+                    lastseen: new Date().toISOString(),
+                    created_at: new Date().toISOString(),
+                    updated_at: new Date().toISOString()
+                })
+                .select()
+                .single();
+
+            if (error) {
+                console.error('Error creating user profile:', error);
+                return null;
+            }
+
+            console.log('User profile created successfully:', data);
+            return data as UserData;
+        } catch (error) {
+            console.error('Exception during user creation:', error);
+            return null;
+        }
     }
 } 

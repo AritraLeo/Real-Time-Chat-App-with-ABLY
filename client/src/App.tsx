@@ -4,6 +4,7 @@ import { AblyProvider } from './context/AblyContext'
 import { Login } from './components/Login'
 import { Register } from './components/Register'
 import { Chat } from './components/Chat'
+import { ChatSelect } from './components/ChatSelect'
 import './index.css'
 
 // Define fallback styles to ensure layout works
@@ -24,6 +25,7 @@ const styles = {
 function AuthenticatedApp() {
   const { user, loading } = useAuth()
   const [showLogin, setShowLogin] = useState(true)
+  const [selectedChat, setSelectedChat] = useState<string | null>(null)
 
   if (loading) {
     return (
@@ -43,7 +45,11 @@ function AuthenticatedApp() {
 
   return (
     <AblyProvider>
-      <Chat />
+      {!selectedChat ? (
+        <ChatSelect onSelectChat={(chatId) => setSelectedChat(chatId)} />
+      ) : (
+        <Chat chatId={selectedChat} onBackToSelection={() => setSelectedChat(null)} />
+      )}
     </AblyProvider>
   )
 }

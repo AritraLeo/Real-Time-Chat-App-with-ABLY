@@ -23,9 +23,12 @@ export class ChatServer {
         const ablyApiKey = process.env.ABLY_API_KEY || '';
         this.ablyClient = new Ably.Realtime({ key: ablyApiKey });
 
-        // Initialize Supabase client
+        // Initialize Supabase client with service role key for admin operations
         const supabaseUrl = process.env.SUPABASE_URL || '';
-        const supabaseKey = process.env.SUPABASE_ANON_KEY || '';
+        const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+        if (!supabaseKey) {
+            console.warn('SUPABASE_SERVICE_ROLE_KEY not set - server may not be able to bypass RLS policies');
+        }
         this.supabase = createClient(supabaseUrl, supabaseKey);
 
         // Initialize User manager
@@ -48,7 +51,7 @@ export class ChatServer {
         }) as RequestHandler);
 
         // Route to get Ably token for client authentication
-        this.app.get('/api/ably/token', ((req: Request, res: Response) => {
+        this.app.get('/api/ably/token', (async (req: Request, res: Response) => {
             try {
                 const userId = req.query.userId as string;
                 if (!userId) {
@@ -58,23 +61,44 @@ export class ChatServer {
                 // Generate token for the client
                 const tokenParams = { clientId: userId };
 
-                // Using the Promise-based API instead of callback
-                this.ablyClient.auth.createTokenRequest(tokenParams)
-                    .then(tokenRequest => {
-                        res.json(tokenRequest);
-                    })
-                    .catch(err => {
-                        console.error('Error generating Ably token:', err);
-                        res.status(500).json({ error: 'Error generating token' });
-                    });
+                // Using the Promise-based API
+                const tokenRequest = await this.ablyClient.auth.createTokenRequest(tokenParams);
+                res.json(tokenRequest);
             } catch (error) {
-                console.error('Error in token endpoint:', error);
-                res.status(500).json({ error: 'Internal server error' });
+                console.error('Error generating Ably token:', error);
+                res.status(500).json({ error: 'Error generating token' });
+            }
+        }) as RequestHandler);
+
+        // Route to register a new user
+        this.app.post('/api/users/register', (async (req: Request, res: Response) => {
+            try {
+                const { userId, email, username } = req.body;
+
+                if (!userId || !email || !username) {
+                    return res.status(400).json({
+                        error: 'User ID, email, and username are required'
+                    });
+                }
+
+                const user = await this.userManager.createUser(userId, email, username);
+
+                if (!user) {
+                    return res.status(500).json({ error: 'Failed to create user' });
+                }
+
+                // Publish the updated user list to all clients
+                await this.publishUserList();
+
+                res.status(201).json(user);
+            } catch (error) {
+                console.error('Error registering user:', error);
+                res.status(500).json({ error: 'Failed to register user' });
             }
         }) as RequestHandler);
 
         // Route to update user's online status
-        this.app.post('/api/users/:userId/status', ((req: Request, res: Response) => {
+        this.app.post('/api/users/:userId/status', (async (req: Request, res: Response) => {
             try {
                 const userId = req.params.userId;
                 const { isOnline } = req.body;
@@ -121,6 +145,13 @@ export class ChatServer {
         // Setup channel for handling messages
         const chatChannel = this.ablyClient.channels.get('chat');
 
+        // Handle requests for user list
+        const usersChannel = this.ablyClient.channels.get('users');
+        usersChannel.subscribe('request_users', async (message) => {
+            console.log('Received request for user list from:', message.data?.userId);
+            await this.publishUserList();
+        });
+
         // Listen for new messages
         chatChannel.subscribe('message', async (message) => {
             try {
@@ -146,16 +177,72 @@ export class ChatServer {
                     const directChannel = this.ablyClient.channels.get(`direct:${recipient.id}`);
                     directChannel.publish('message', message.data);
                 }
+
+                // Broadcast to general chat that a new message was sent
+                const generalChannel = this.ablyClient.channels.get('general-chat');
+                generalChannel.publish('message', message.data);
             } catch (error) {
                 console.error('Error processing message:', error);
             }
         });
 
         // Setup presence listeners for online status
-        this.userManager.setupPresenceListeners((userId, isOnline) => {
-            console.log(`User ${userId} is now ${isOnline ? 'online' : 'offline'}`);
-            // You could perform additional actions here when users go online/offline
+        const presenceChannel = this.ablyClient.channels.get('presence');
+
+        // Subscribe to presence enter events
+        presenceChannel.presence.subscribe('enter', async (memberInfo) => {
+            const userData = memberInfo.data as { userId: string };
+            console.log(`User ${userData.userId} is now online`);
+
+            // Update the user's online status in the database
+            await this.userManager.updateOnlineStatus(userData.userId, true);
+
+            // Publish the updated user list to all clients
+            await this.publishUserList();
         });
+
+        // Subscribe to presence leave events
+        presenceChannel.presence.subscribe('leave', async (memberInfo) => {
+            const userData = memberInfo.data as { userId: string };
+            console.log(`User ${userData.userId} is now offline`);
+
+            // Update the user's online status in the database
+            await this.userManager.updateOnlineStatus(userData.userId, false);
+
+            // Publish the updated user list to all clients
+            await this.publishUserList();
+        });
+    }
+
+    // Add a method to publish the user list to all clients
+    private async publishUserList(): Promise<void> {
+        try {
+            console.log('Publishing user list to all clients');
+
+            // Get the current user list from the database - using lowercase column names
+            const { data, error } = await this.supabase
+                .from('users')
+                .select('id, username, isonline, lastseen'); // Changed isOnline to isonline and lastSeen to lastseen
+
+            if (error) {
+                console.error('Error fetching users for publishing:', error);
+                return;
+            }
+
+            console.log('Retrieved users from database:', data);
+
+            if (!data || data.length === 0) {
+                console.warn('No users found in the database to publish');
+                return;
+            }
+
+            // Publish the user list to the users channel
+            const usersChannel = this.ablyClient.channels.get('users');
+            await usersChannel.publish('update', { users: data });
+            console.log('User list published successfully, count:', data.length);
+        } catch (error) {
+            console.error('Error publishing user list:', error);
+        }
     }
 
     public start(): void {

@@ -1,127 +1,98 @@
-# Real-Time Chat App with Ably and Supabase
+# Real-Time Chat App with ABLY
 
-A real-time chat application using Node.js + TypeScript for the backend and React + Vite for the frontend. The application uses Ably for real-time messaging and Supabase for user management and data storage.
+A real-time chat application built with Node.js, TypeScript, Vite, Supabase, and Ably.
 
 ## Features
 
-- User registration and authentication via Supabase
+- User authentication with Supabase
 - Real-time messaging with Ably
-- Online/offline status indicators
-- Group and private messaging
-- Responsive design for mobile and desktop
+- Online/offline user status
+- Direct messaging
+- User presence
+- Chat room selection
 
-## Getting Started
+## Setup Instructions
 
 ### Prerequisites
 
-- Node.js (v14 or higher)
+- Node.js 16+
 - npm or yarn
-- Ably account and API key
-- Supabase account and project
+- Supabase account
+- Ably account
 
-### Backend Setup
+### Environment Variables
 
-1. Navigate to the server directory:
+1. Create a `.env` file in the `client` directory:
 
-   ```
-   cd server
-   ```
+```
+VITE_SUPABASE_URL=your_supabase_url
+VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
+VITE_API_URL=http://localhost:3000
+```
 
+2. Create a `.env` file in the `server` directory:
+
+```
+PORT=3000
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key
+ABLY_API_KEY=your_ably_api_key
+CORS_ORIGIN=http://localhost:5173
+```
+
+> **IMPORTANT**: The `SUPABASE_SERVICE_ROLE_KEY` is required for the server to bypass Row-Level Security policies when creating users. You can find this key in your Supabase dashboard under Project Settings > API. Be careful not to expose this key in client-side code.
+
+### Database Setup
+
+1. Go to your Supabase dashboard
+2. Navigate to the SQL Editor
+3. Create a new query and paste the contents of `server/src/db/schema.sql`
+4. Run the query to create the necessary tables and policies
+
+### Installation
+
+1. Clone the repository
 2. Install dependencies:
 
-   ```
-   npm install
-   ```
+```bash
+# Install server dependencies
+cd server
+npm install
 
-3. Copy the environment file and add your credentials:
+# Install client dependencies
+cd ../client
+npm install
+```
 
-   ```
-   cp .env.example .env
-   ```
+### Running the Application
 
-4. Edit the `.env` file with your Ably and Supabase credentials.
+1. Start the server:
 
-5. Build and run the server:
+```bash
+cd server
+npm run build
+npm start
+```
 
-   ```
-   npm run build
-   npm start
-   ```
+2. Start the client:
 
-   For development:
+```bash
+cd client
+npm run dev
+```
 
-   ```
-   npm run dev
-   ```
+3. Open your browser and navigate to `http://localhost:5173`
 
-### Frontend Setup
+## Troubleshooting
 
-1. Navigate to the client directory:
+If you encounter issues with users not showing up:
 
-   ```
-   cd client
-   ```
-
-2. Install dependencies:
-
-   ```
-   npm install
-   ```
-
-3. Copy the environment file and add your credentials:
-
-   ```
-   cp .env.example .env
-   ```
-
-4. Edit the `.env` file with your Supabase credentials and API URL.
-
-5. Run the development server:
-   ```
-   npm run dev
-   ```
-
-## Supabase Database Setup
-
-### Tables Required
-
-1. **users**:
-
-   - id (uuid, primary key)
-   - username (text, not null)
-   - email (text, not null, unique)
-   - isOnline (boolean, default: false)
-   - lastSeen (timestamp)
-   - created_at (timestamp)
-
-2. **messages**:
-   - id (uuid, primary key)
-   - sender_id (uuid, references users.id)
-   - recipient_id (uuid, references users.id, nullable)
-   - content (text, not null)
-   - timestamp (timestamp, not null)
-   - is_read (boolean, default: false)
-
-## Deployment
-
-### Backend
-
-The backend can be deployed to any Node.js hosting service such as:
-
-- Heroku
-- Vercel
-- Digital Ocean
-- AWS
-
-### Frontend
-
-The frontend can be deployed using:
-
-- Vercel
-- Netlify
-- GitHub Pages
-- Firebase Hosting
+1. Check that the `users` table exists in your Supabase database
+2. Ensure all environment variables are set correctly
+3. Restart both the server and client
+4. Check the server logs for any errors
 
 ## License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+MIT
