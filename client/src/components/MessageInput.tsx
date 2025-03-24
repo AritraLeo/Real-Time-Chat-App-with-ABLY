@@ -1,24 +1,20 @@
 import { useState, FormEvent, KeyboardEvent } from 'react';
-import { useAbly } from '../context/AblyContext';
 
-interface MessageInputProps {
-    recipient?: {
-        id: string;
-        username: string;
-    };
+export interface MessageInputProps {
+    onSendMessage: (content: string) => Promise<void>;
+    placeholder?: string;
+    disabled?: boolean;
 }
 
-export function MessageInput({ recipient }: MessageInputProps) {
+export function MessageInput({ onSendMessage, placeholder = 'Type a message...', disabled = false }: MessageInputProps) {
     const [message, setMessage] = useState('');
-    const { sendMessage } = useAbly();
-    const forumName = 'General Chat';
 
     const handleSubmit = async (e: FormEvent) => {
         e.preventDefault();
 
-        if (!message.trim()) return;
+        if (!message.trim() || disabled) return;
 
-        await sendMessage(message, recipient);
+        await onSendMessage(message);
         setMessage('');
     };
 
@@ -30,19 +26,20 @@ export function MessageInput({ recipient }: MessageInputProps) {
     };
 
     return (
-        <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200">
+        <form onSubmit={handleSubmit} className="p-4">
             <div className="flex items-end gap-2">
                 <textarea
                     className="flex-1 border border-gray-300 rounded-lg py-2 px-3 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none min-h-[40px] max-h-[120px]"
-                    placeholder={recipient ? `Message ${recipient.username}...` : `Send a message to ${forumName}...`}
+                    placeholder={placeholder}
                     value={message}
                     onChange={(e) => setMessage(e.target.value)}
                     onKeyDown={handleKeyDown}
                     rows={1}
+                    disabled={disabled}
                 />
                 <button
                     type="submit"
-                    disabled={!message.trim()}
+                    disabled={!message.trim() || disabled}
                     className="bg-blue-500 text-white px-4 py-2 rounded-lg disabled:opacity-50"
                 >
                     Send

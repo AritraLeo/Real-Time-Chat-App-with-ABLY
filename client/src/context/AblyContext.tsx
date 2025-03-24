@@ -12,13 +12,31 @@ interface UserPresenceInfo {
     lastseen?: string;
 }
 
+interface Message {
+    id?: string;
+    content: string;
+    sender: {
+        id: string;
+        username: string;
+    };
+    recipient?: {
+        id: string;
+        username: string;
+    };
+    chat_id: string;
+    timestamp?: string;
+    created_at?: string;
+}
+
 interface AblyContextType {
     ably: Ably.Realtime | null;
-    chatChannel: Ably.RealtimeChannel | null;
-    presenceChannel: Ably.RealtimeChannel | null;
+    activeChatId: string | null;
+    setActiveChatId: (chatId: string) => void;
+    messages: Record<string, Message[]>;
     userPresence: Map<string, boolean>;
     users: UserPresenceInfo[];
-    sendMessage: (content: string, recipient?: { id: string, username: string }) => Promise<void>;
+    sendMessage: (content: string, chatId: string, recipient?: { id: string, username: string }) => Promise<void>;
+    loadMoreMessages: (chatId: string) => Promise<void>;
 }
 
 const AblyContext = createContext<AblyContextType | undefined>(undefined);
@@ -26,10 +44,10 @@ const AblyContext = createContext<AblyContextType | undefined>(undefined);
 export function AblyProvider({ children }: { children: ReactNode }) {
     const { user } = useAuth();
     const [ably, setAbly] = useState<Ably.Realtime | null>(null);
-    const [chatChannel, setChatChannel] = useState<Ably.RealtimeChannel | null>(null);
-    const [presenceChannel, setPresenceChannel] = useState<Ably.RealtimeChannel | null>(null);
     const [userPresence, setUserPresence] = useState<Map<string, boolean>>(new Map());
     const [users, setUsers] = useState<UserPresenceInfo[]>([]);
+    const [activeChatId, setActiveChatId] = useState<string | null>(null);
+    const [messages, setMessages] = useState<Record<string, Message[]>>({});
 
     // Initialize Ably client when user is authenticated
     useEffect(() => {
@@ -38,8 +56,6 @@ export function AblyProvider({ children }: { children: ReactNode }) {
         const initAbly = async () => {
             if (!user) {
                 setAbly(null);
-                setChatChannel(null);
-                setPresenceChannel(null);
                 setUsers([]);
                 return;
             }
@@ -55,13 +71,8 @@ export function AblyProvider({ children }: { children: ReactNode }) {
                 // Set the Ably client and channels
                 setAbly(client);
 
-                // Initialize the chat channel
-                const chat = client.channels.get('chat');
-                setChatChannel(chat);
-
                 // Initialize the presence channel
                 const presence = client.channels.get('presence');
-                setPresenceChannel(presence);
 
                 // Initialize the users channel for user list updates
                 const usersChannel = client.channels.get('users');
@@ -126,12 +137,6 @@ export function AblyProvider({ children }: { children: ReactNode }) {
 
                 // Enter the presence channel
                 await presence.presence.enter({ userId: user.id });
-
-                // Subscribe to the general chat channel
-                const generalChat = client.channels.get('general-chat');
-                generalChat.subscribe('message', (message) => {
-                    console.log('General chat message:', message.data);
-                });
             } catch (error) {
                 console.error('Error initializing Ably:', error);
             }
@@ -147,22 +152,127 @@ export function AblyProvider({ children }: { children: ReactNode }) {
         };
     }, [user]);
 
-    // Function to send a message
-    const sendMessage = async (content: string, recipient?: { id: string, username: string }) => {
-        if (!chatChannel || !user) return;
+    // Handle active chat change and fetch initial messages
+    useEffect(() => {
+        if (!ably || !activeChatId || !user) return;
+
+        const fetchInitialMessages = async () => {
+            try {
+                const response = await fetch(`${import.meta.env.VITE_API_URL}/api/chat-rooms/${activeChatId}/messages`);
+                if (!response.ok) {
+                    throw new Error('Failed to fetch messages');
+                }
+
+                const data = await response.json();
+                setMessages(prev => ({
+                    ...prev,
+                    [activeChatId]: data.reverse() // Reverse to show newest at the bottom
+                }));
+            } catch (error) {
+                console.error(`Error fetching messages for chat ${activeChatId}:`, error);
+            }
+        };
+
+        // Set up chat channel for the active chat
+        const channelName = `chat:${activeChatId}`;
+        const chatChannel = ably.channels.get(channelName);
+
+        // Subscribe to messages on this channel
+        const handleMessage = (message: Ably.Message) => {
+            console.log(`New message in ${activeChatId}:`, message.data);
+            if (!message.data) return;
+
+            const newMessage = message.data as Message;
+            setMessages(prev => {
+                const existingMessages = prev[activeChatId] || [];
+                // Avoid duplicate messages
+                if (!existingMessages.some(m => m.id === newMessage.id)) {
+                    return {
+                        ...prev,
+                        [activeChatId]: [...existingMessages, newMessage]
+                    };
+                }
+                return prev;
+            });
+        };
+
+        chatChannel.subscribe('message', handleMessage);
+        fetchInitialMessages();
+
+        // Cleanup function to unsubscribe when component unmounts or chat changes
+        return () => {
+            chatChannel.unsubscribe('message', handleMessage);
+        };
+    }, [ably, activeChatId, user]);
+
+    // Function to load more messages (pagination)
+    const loadMoreMessages = async (chatId: string) => {
+        if (!user || !chatId) return;
 
         try {
-            const message = {
-                content,
-                sender: {
-                    id: user.id,
-                    username: user.user_metadata.username || 'Anonymous'
-                },
-                recipient,
-                timestamp: new Date().toISOString()
-            };
+            const currentMessages = messages[chatId] || [];
+            const oldestMessageDate = currentMessages.length > 0
+                ? new Date(currentMessages[0].created_at || currentMessages[0].timestamp || '')
+                : new Date();
 
-            await chatChannel.publish('message', message);
+            const response = await fetch(
+                `${import.meta.env.VITE_API_URL}/api/chat-rooms/${chatId}/messages?before=${oldestMessageDate.toISOString()}`
+            );
+
+            if (!response.ok) {
+                throw new Error('Failed to fetch more messages');
+            }
+
+            const olderMessages = await response.json();
+
+            if (olderMessages.length > 0) {
+                setMessages(prev => ({
+                    ...prev,
+                    [chatId]: [...olderMessages.reverse(), ...currentMessages]
+                }));
+            }
+        } catch (error) {
+            console.error(`Error loading more messages for chat ${chatId}:`, error);
+        }
+    };
+
+    // Function to send a message
+    const sendMessage = async (content: string, chatId: string, recipient?: { id: string, username: string }) => {
+        if (!ably || !user) return;
+
+        try {
+            const response = await fetch(`${import.meta.env.VITE_API_URL}/api/chat-rooms/${chatId}/messages`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    content,
+                    senderId: user.id,
+                    recipientId: recipient?.id
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Failed to send message');
+            }
+
+            const messageData = await response.json();
+
+            // Optimistically add the message to the UI
+            setMessages(prev => {
+                const existingMessages = prev[chatId] || [];
+                return {
+                    ...prev,
+                    [chatId]: [...existingMessages, {
+                        ...messageData,
+                        sender: {
+                            id: user.id,
+                            username: user.user_metadata.username
+                        }
+                    }]
+                };
+            });
         } catch (error) {
             console.error('Error sending message:', error);
         }
@@ -170,11 +280,13 @@ export function AblyProvider({ children }: { children: ReactNode }) {
 
     const value = {
         ably,
-        chatChannel,
-        presenceChannel,
+        activeChatId,
+        setActiveChatId,
+        messages,
         userPresence,
         users,
-        sendMessage
+        sendMessage,
+        loadMoreMessages
     };
 
     return <AblyContext.Provider value={value}>{children}</AblyContext.Provider>;

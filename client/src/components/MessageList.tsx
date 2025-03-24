@@ -1,9 +1,8 @@
-import { useState, useEffect, useRef } from 'react';
-import { useAbly } from '../context/AblyContext';
-import { useAuth } from '../context/AuthContext';
+import { useRef, useEffect } from 'react';
 import { UserAvatar } from './UserAvatar';
 
-interface Message {
+export interface Message {
+    id?: string;
     content: string;
     sender: {
         id: string;
@@ -13,13 +12,16 @@ interface Message {
         id: string;
         username: string;
     };
+    chat_id?: string;
     timestamp: string;
 }
 
-export function MessageList() {
-    const { user } = useAuth();
-    const { chatChannel, ably } = useAbly();
-    const [messages, setMessages] = useState<Message[]>([]);
+interface MessageListProps {
+    messages: Message[];
+    currentUserId: string;
+}
+
+export function MessageList({ messages, currentUserId }: MessageListProps) {
     const messagesEndRef = useRef<HTMLDivElement>(null);
 
     // Auto-scroll to bottom when new messages arrive
@@ -30,35 +32,6 @@ export function MessageList() {
     useEffect(() => {
         scrollToBottom();
     }, [messages]);
-
-    // Subscribe to messages
-    useEffect(() => {
-        if (!chatChannel || !ably) return;
-
-        const handleMessage = (message: unknown) => {
-            if (!message || typeof message !== 'object' || !('data' in message)) return;
-            const newMessage = message.data as Message;
-            setMessages(prev => [...prev, newMessage]);
-        };
-
-        // Subscribe to the chat channel
-        chatChannel.subscribe('message', handleMessage);
-
-        // If the user has a direct channel, subscribe to that too
-        let directChannel;
-        if (user) {
-            directChannel = ably.channels.get(`direct:${user.id}`);
-            directChannel.subscribe('message', handleMessage);
-        }
-
-        // Cleanup
-        return () => {
-            chatChannel.unsubscribe('message', handleMessage);
-            if (directChannel) {
-                directChannel.unsubscribe('message', handleMessage);
-            }
-        };
-    }, [chatChannel, ably, user]);
 
     // Format timestamp
     const formatTime = (timestamp: string) => {
@@ -75,13 +48,13 @@ export function MessageList() {
     }
 
     return (
-        <div className="flex-1 overflow-y-auto p-4 space-y-4">
+        <div className="space-y-4">
             {messages.map((message, index) => {
-                const isOwnMessage = user?.id === message.sender.id;
+                const isOwnMessage = currentUserId === message.sender.id;
 
                 return (
                     <div
-                        key={`${message.timestamp}-${index}`}
+                        key={message.id || `${message.timestamp}-${index}`}
                         className={`flex ${isOwnMessage ? 'justify-end' : 'justify-start'}`}
                     >
                         <div className={`flex ${isOwnMessage ? 'flex-row-reverse' : 'flex-row'} items-end gap-2 max-w-[80%]`}>

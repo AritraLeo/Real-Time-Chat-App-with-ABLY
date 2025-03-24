@@ -6,10 +6,12 @@ import { UserAvatar } from './UserAvatar';
 import { useAuth } from '../context/AuthContext';
 import { useAbly } from '../context/AblyContext';
 
+// Use the same User interface as in UserList to avoid type conflicts
 interface User {
     id: string;
     username: string;
-    isOnline: boolean;
+    isOnline?: boolean;
+    isonline?: boolean;
     lastSeen?: string;
 }
 
@@ -20,15 +22,36 @@ interface ChatProps {
 
 export function Chat({ chatId, onBackToSelection }: ChatProps) {
     const { user, signOut } = useAuth();
-    const { users } = useAbly();
+    const { users, activeChatId, setActiveChatId, messages, sendMessage } = useAbly();
     const [selectedUser, setSelectedUser] = useState<User | null>(null);
     const [showUserList, setShowUserList] = useState(true);
-    const [activeForum] = useState(chatId === 'general' ? 'General Chat' : chatId);
+    const [chatName, setChatName] = useState('');
 
-    // Log users for debugging
+    // Set active chat in Ably context when chatId changes
+    useEffect(() => {
+        setActiveChatId(chatId);
+
+        // Determine chat name based on chatId
+        switch (chatId) {
+            case 'general':
+                setChatName('General Chat');
+                break;
+            case 'tech':
+                setChatName('Tech Chat');
+                break;
+            case 'resources':
+                setChatName('Resources');
+                break;
+            default:
+                setChatName(chatId);
+        }
+    }, [chatId, setActiveChatId]);
+
+    // Log users and messages for debugging
     useEffect(() => {
         console.log('Chat component - Current users:', users);
-    }, [users]);
+        console.log('Chat component - Current messages:', messages[activeChatId || ''] || []);
+    }, [users, messages, activeChatId]);
 
     const handleUserSelect = (user: User) => {
         setSelectedUser(user);
@@ -42,12 +65,20 @@ export function Chat({ chatId, onBackToSelection }: ChatProps) {
         setShowUserList(prev => !prev);
     };
 
-    if (!user) {
-        return null;
-    }
+    // Handle sending a message
+    const handleSendMessage = (content: string) => {
+        if (activeChatId) {
+            return sendMessage(
+                content,
+                activeChatId,
+                selectedUser ? { id: selectedUser.id, username: selectedUser.username } : undefined
+            );
+        }
+        return Promise.resolve();
+    };
 
     // Count online users
-    const onlineUsersCount = users.filter(u => u.isOnline).length;
+    const onlineUsersCount = users.filter(u => u.isOnline || u.isonline).length;
 
     return (
         <div className="flex flex-col h-screen bg-gray-100">
@@ -62,7 +93,7 @@ export function Chat({ chatId, onBackToSelection }: ChatProps) {
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
                         </svg>
                     </button>
-                    <h1 className="text-xl font-semibold">{activeForum}</h1>
+                    <h1 className="text-xl font-semibold">{chatName}</h1>
                 </div>
                 <div className="flex items-center">
                     {user && (
@@ -92,7 +123,7 @@ export function Chat({ chatId, onBackToSelection }: ChatProps) {
                 >
                     {/* User list section title */}
                     <div className="px-4 py-2 border-b border-gray-200">
-                        <div className="font-medium text-gray-700">{activeForum}</div>
+                        <div className="font-medium text-gray-700">{chatName}</div>
                         <div className="text-xs text-gray-500">
                             {onlineUsersCount} user(s) online
                         </div>
@@ -127,7 +158,7 @@ export function Chat({ chatId, onBackToSelection }: ChatProps) {
                                     <div>
                                         <div className="font-semibold">{selectedUser.username}</div>
                                         <div className="text-xs">
-                                            {selectedUser.isOnline ? (
+                                            {selectedUser.isOnline || selectedUser.isonline ? (
                                                 <span className="text-green-500">Online</span>
                                             ) : (
                                                 <span className="text-gray-500">Offline</span>
@@ -136,21 +167,27 @@ export function Chat({ chatId, onBackToSelection }: ChatProps) {
                                     </div>
                                 </>
                             ) : (
-                                <div className="font-semibold">{activeForum}</div>
+                                <div className="font-semibold">{chatName}</div>
                             )}
                         </div>
                     </div>
 
-                    {/* Messages */}
-                    <MessageList />
+                    {/* Message list */}
+                    <div className="flex-1 overflow-y-auto p-4">
+                        <MessageList
+                            messages={messages[activeChatId || ''] || []}
+                            currentUserId={user?.id || ''}
+                        />
+                    </div>
 
                     {/* Message input */}
-                    <MessageInput
-                        recipient={selectedUser ? {
-                            id: selectedUser.id,
-                            username: selectedUser.username
-                        } : undefined}
-                    />
+                    <div className="border-t border-gray-200">
+                        <MessageInput
+                            onSendMessage={handleSendMessage}
+                            placeholder={`Message ${selectedUser ? selectedUser.username : chatName}...`}
+                            disabled={!activeChatId}
+                        />
+                    </div>
                 </div>
             </div>
         </div>

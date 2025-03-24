@@ -4,6 +4,8 @@ import * as dotenv from 'dotenv';
 import * as Ably from 'ably';
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { User } from './models/User';
+import { Message } from './models/Message';
+import { CHAT_ROOMS, ChatRoom } from './constants/chatRooms';
 
 // Load environment variables
 dotenv.config();
@@ -14,6 +16,7 @@ export class ChatServer {
     private ablyClient: Ably.Realtime;
     private supabase: SupabaseClient;
     private userManager: User;
+    private messageManager: Message;
 
     constructor() {
         this.app = express();
@@ -33,6 +36,9 @@ export class ChatServer {
 
         // Initialize User manager
         this.userManager = new User(supabaseUrl, supabaseKey, this.ablyClient);
+
+        // Initialize Message manager
+        this.messageManager = new Message(supabaseUrl, supabaseKey, this.ablyClient);
 
         this.setupMiddleware();
         this.setupRoutes();
@@ -70,6 +76,65 @@ export class ChatServer {
             }
         }) as RequestHandler);
 
+        // Route to get all available chat rooms
+        this.app.get('/api/chat-rooms', ((_req: Request, res: Response) => {
+            res.json(CHAT_ROOMS);
+        }) as RequestHandler);
+
+        // Route to get messages for a specific chat room
+        this.app.get('/api/chat-rooms/:chatId/messages', (async (req: Request, res: Response) => {
+            try {
+                const chatId = req.params.chatId;
+                const limit = req.query.limit ? parseInt(req.query.limit as string) : 50;
+
+                const messages = await this.messageManager.getMessagesForChat(chatId, limit);
+                res.json(messages);
+            } catch (error) {
+                console.error('Error fetching messages:', error);
+                res.status(500).json({ error: 'Failed to fetch messages' });
+            }
+        }) as RequestHandler);
+
+        // Route to send a message to a chat room
+        this.app.post('/api/chat-rooms/:chatId/messages', (async (req: Request, res: Response) => {
+            try {
+                const chatId = req.params.chatId;
+                const { content, senderId, recipientId } = req.body;
+
+                if (!content || !senderId) {
+                    return res.status(400).json({
+                        error: 'Message content and sender ID are required'
+                    });
+                }
+
+                // Get the sender's username
+                const sender = await this.userManager.getUserById(senderId);
+                if (!sender) {
+                    return res.status(404).json({ error: 'Sender not found' });
+                }
+
+                // Save the message to the database
+                const message = await this.messageManager.saveMessage(
+                    senderId,
+                    content,
+                    chatId,
+                    recipientId
+                );
+
+                if (!message) {
+                    return res.status(500).json({ error: 'Failed to save message' });
+                }
+
+                // Publish the message to Ably
+                await this.messageManager.publishMessage(message, sender.username);
+
+                res.status(201).json(message);
+            } catch (error) {
+                console.error('Error sending message:', error);
+                res.status(500).json({ error: 'Failed to send message' });
+            }
+        }) as RequestHandler);
+
         // Route to register a new user
         this.app.post('/api/users/register', (async (req: Request, res: Response) => {
             try {
@@ -103,18 +168,13 @@ export class ChatServer {
                 const userId = req.params.userId;
                 const { isOnline } = req.body;
 
-                this.userManager.updateOnlineStatus(userId, isOnline)
-                    .then(success => {
-                        if (success) {
-                            res.json({ success: true });
-                        } else {
-                            res.status(500).json({ error: 'Failed to update status' });
-                        }
-                    })
-                    .catch(error => {
-                        console.error('Error updating user status:', error);
-                        res.status(500).json({ error: 'Internal server error' });
-                    });
+                const success = await this.userManager.updateOnlineStatus(userId, isOnline);
+
+                if (success) {
+                    res.json({ success: true });
+                } else {
+                    res.status(500).json({ error: 'Failed to update status' });
+                }
             } catch (error) {
                 console.error('Error updating user status:', error);
                 res.status(500).json({ error: 'Internal server error' });
@@ -122,18 +182,11 @@ export class ChatServer {
         }) as RequestHandler);
 
         // Route to check if a user is online
-        this.app.get('/api/users/:userId/status', ((req: Request, res: Response) => {
+        this.app.get('/api/users/:userId/status', (async (req: Request, res: Response) => {
             try {
                 const userId = req.params.userId;
-
-                this.userManager.isUserOnline(userId)
-                    .then(isOnline => {
-                        res.json({ isOnline });
-                    })
-                    .catch(error => {
-                        console.error('Error checking user status:', error);
-                        res.status(500).json({ error: 'Internal server error' });
-                    });
+                const isOnline = await this.userManager.isUserOnline(userId);
+                res.json({ isOnline });
             } catch (error) {
                 console.error('Error checking user status:', error);
                 res.status(500).json({ error: 'Internal server error' });
@@ -142,48 +195,23 @@ export class ChatServer {
     }
 
     private setupAblyListeners(): void {
-        // Setup channel for handling messages
-        const chatChannel = this.ablyClient.channels.get('chat');
+        // Set up channel for each chat room
+        CHAT_ROOMS.forEach(room => {
+            const channelName = `chat:${room.id}`;
+            console.log(`Setting up Ably channel: ${channelName}`);
+            const roomChannel = this.ablyClient.channels.get(channelName);
+
+            // Listen for messages in this chat room
+            roomChannel.subscribe('message', async (message) => {
+                console.log(`Received message in ${room.name}:`, message.data);
+            });
+        });
 
         // Handle requests for user list
         const usersChannel = this.ablyClient.channels.get('users');
         usersChannel.subscribe('request_users', async (message) => {
             console.log('Received request for user list from:', message.data?.userId);
             await this.publishUserList();
-        });
-
-        // Listen for new messages
-        chatChannel.subscribe('message', async (message) => {
-            try {
-                const { sender, recipient, content, timestamp } = message.data;
-
-                // Save the message to Supabase
-                const { error } = await this.supabase
-                    .from('messages')
-                    .insert({
-                        sender_id: sender.id,
-                        recipient_id: recipient?.id || null, // For direct messages
-                        content,
-                        timestamp: timestamp || new Date().toISOString(),
-                        is_read: false
-                    });
-
-                if (error) {
-                    console.error('Error saving message to database:', error);
-                }
-
-                // If this is a direct message, publish to recipient's channel
-                if (recipient && recipient.id) {
-                    const directChannel = this.ablyClient.channels.get(`direct:${recipient.id}`);
-                    directChannel.publish('message', message.data);
-                }
-
-                // Broadcast to general chat that a new message was sent
-                const generalChannel = this.ablyClient.channels.get('general-chat');
-                generalChannel.publish('message', message.data);
-            } catch (error) {
-                console.error('Error processing message:', error);
-            }
         });
 
         // Setup presence listeners for online status
